@@ -159,13 +159,17 @@ func getPidFromEbpf(proto string, srcPort uint, srcIP net.IP, dstIP net.IP, dstP
 		return nil
 	}
 
-	proc = findConnProcess(&value, k)
+	if proc := isPIDinEventsCache(int(value.Pid), int(value.UID)); proc == nil {
+		proc = pushNewConnProcess(&value)
+		log.Debug("[ebpf conn] not in cache, NOR in execEvents: %s, %d -> %s -> %s", k, proc.ID, proc.Path, proc.Args)
+	}
 
 	log.Debug("[ebpf conn] adding item to cache: %s", k)
 	ebpfCache.addNewItem(k, key, proc.ID, int(value.UID))
 	if delItemIfFound {
 		deleteEbpfEntry(proto, key)
 	}
+
 	return
 }
 
@@ -183,24 +187,17 @@ func isPIDinEventsCache(pid, uid int) (proc *procmon.Process) {
 	return nil
 }
 
-// findConnProcess finds the process' details of a connection.
+// pushNewConnProcess create a process entry of a connection and push to events cache.
 // By default we only receive the PID of the process, so we need to get
 // the rest of the details.
 // TODO: get the details from kernel, with mm_struct (exe_file, fd_path, etc).
-func findConnProcess(value *networkEventT, connKey string) (proc *procmon.Process) {
-
-	if p := isPIDinEventsCache(int(value.Pid), int(value.UID)); p != nil {
-		return p
-	}
-
+func pushNewConnProcess(value *networkEventT) (proc *procmon.Process) {
 	// We'll end here if the events module has not been loaded, or if the process is not in cache.
 	comm := byteArrayToString(value.Comm[:])
 	proc = procmon.NewProcess(int(value.Pid), comm)
 	proc.UID = int(value.UID)
 	procmon.EventsCache.Add(proc)
 	procmon.EventsCache.Update(proc, nil)
-	log.Debug("[ebpf conn] not in cache, NOR in execEvents: %s, %d -> %s -> %s", connKey, proc.ID, proc.Path, proc.Args)
-
 	return
 }
 
